@@ -11,47 +11,45 @@ function [frameShifts,upCross,downCross,diffStats,transitionNotFound,T]=frameTim
 %                       T - digital data time stamps
 %                       transitionNotFound - if matching time stamp was not found and original trigger taken instead
 %
-% Last updated : 15/07/15
+% Last updated : 26/04/23
 
 %% default variables
 tStart=0;
-tEnd=dataRecordingObj.recordingDuration_ms;
-Fs=dataRecordingObj.samplingFrequency(1);
+tEnd=[];
+Fs=[];
 
 chunckOverlap=1; %ms
 maxChunck=1000*60*10; %ms
 trialStartEndDigiTriggerNumbers=[3 4];
 analogChNum=[]; %this used to be 1, now Kwik's getAnalog finds on its own
+refCh=[]; %a reference channel to substract from the signal channel
 transition=[];
 delay2Shift=2.5/60*1000; %ms
 maxFrameDeviation=1/60*1000; %ms
 noisyAnalog = false; % recalculates thresholds for every window - usese a combination of digital triggers and analog data to extract locations in noisy cases
 useDigitalTriggersAsInitialTimeStamps = true;
 extractDiodeElectrodeChannel=false;
-biasTowardsThreshold='none';%'upper','lower','none' - biases the threshold towards one of the clusters identified in test data
+minTrials4Statistics=20;
+thresholdSelection='none';%'upper','lower','none','manual' - biases the threshold towards one of the clusters identified in test data
+frameRate=60;
+inputThreshold=[];
+extractSingleFrameShifts=0; %in case stimulation is such that it switches every frame
+lowpass=0; %if to run a low pass filter
+F=[]; %filter object
 
 plotDiodeTransitions=0;
 T=[]; %digital triggers in the recording
 
-%LPF parameters
-F=filterData(Fs);
-F.lowPassStopCutoff=1/100;
-F.lowPassPassCutoff=1/120;
-F.highPassStopCutoff=0.000625;
-F.highPassPassCutoff=0.00065625;
-F=F.designLowPass;
-
 %% Output list of default variables
 %print out default arguments and values if no inputs are given
-if nargin==0
+if nargin==0 || dataRecordingObj=='?'
     defaultArguments=who;
     for i=1:numel(defaultArguments)
         eval(['defaultArgumentValue=' defaultArguments{i} ';']);
         if numel(defaultArgumentValue)==1
             disp([defaultArguments{i} ' = ' num2str(defaultArgumentValue)]);
         else
-            fprintf([defaultArguments{i} ' = ']);
-            disp(defaultArgumentValue);
+            fprintf([defaultArguments{i} ' = \n']);
         end
     end
     return;
@@ -63,7 +61,31 @@ for i=1:2:length(varargin)
 end
 
 %% Main function
-frameSamples=round(1/60*Fs);
+
+if isempty(tEnd)
+    tEnd=dataRecordingObj.recordingDuration_ms;
+end
+if isempty(Fs)
+    Fs=dataRecordingObj.samplingFrequency(1);
+end
+frameSamples=round(Fs/frameRate);%calculate the number of samples per frame
+
+if extractSingleFrameShifts
+    medLength=frameSamples*0.2;
+else
+    medLength=frameSamples*0.8;
+
+end
+
+if isempty(F)
+    %LPF parameters
+    F=filterData(Fs);
+    F.lowPassStopCutoff=1/100;
+    F.lowPassPassCutoff=1/120;
+    F.highPassStopCutoff=0.000625;
+    F.highPassPassCutoff=0.00065625;
+    F=F.designLowPass;
+end
 
 %extract digital triggers times if they were not provided during input
 hWB=waitbar(0,'Getting digital triggers...');
@@ -77,6 +99,11 @@ if isempty(T) && useDigitalTriggersAsInitialTimeStamps
         frameShifts=[];upCross=[];downCross=[];
         return;
     end
+end
+
+if ~isempty(inputThreshold)
+    disp('Since a specific transition was chosen, the transition detection is swithched to fixed mode');
+    thresholdSelection='fixed';
 end
 
 %determine the chunck size
@@ -114,25 +141,30 @@ if ~noisyAnalog %if noisy, estimate for each chunk
         if useDigitalTriggersAsInitialTimeStamps
             avgTrialDuration=round(mean(T{trialStartEndDigiTriggerNumbers(2)}-T{trialStartEndDigiTriggerNumbers(1)})*2);
             if extractDiodeElectrodeChannel %in some cases diode is recorded on an electrode channel rather than an analog channel
-                [Atmp]=dataRecordingObj.getData(analogChNum,T{trialStartEndDigiTriggerNumbers(1)}(randi([2, max(11,numel(T{trialStartEndDigiTriggerNumbers(1)}))-1],[1 min(10,numel(T{trialStartEndDigiTriggerNumbers(1)}))-2]))-100,avgTrialDuration);
+                [Atmp]=dataRecordingObj.getData([analogChNum refCh],...
+                    T{trialStartEndDigiTriggerNumbers(1)}(randi([2, max(11,numel(T{trialStartEndDigiTriggerNumbers(1)}))-1],[1 min(minTrials4Statistics,numel(T{trialStartEndDigiTriggerNumbers(1)}))-2]))-100,avgTrialDuration);
             else
-                [Atmp]=dataRecordingObj.getAnalogData(analogChNum,T{trialStartEndDigiTriggerNumbers(1)}(randi([2, max(11,numel(T{trialStartEndDigiTriggerNumbers(1)}))-1],[1 min(10,numel(T{trialStartEndDigiTriggerNumbers(1)}))-2]))-100,avgTrialDuration);
+                [Atmp]=dataRecordingObj.getAnalogData([analogChNum refCh],...
+                    T{trialStartEndDigiTriggerNumbers(1)}(randi([2, max(11,numel(T{trialStartEndDigiTriggerNumbers(1)}))-1],[1 min(minTrials4Statistics,numel(T{trialStartEndDigiTriggerNumbers(1)}))-2]))-100,avgTrialDuration);
             end
         else
             avgTrialDuration=100000;
             if extractDiodeElectrodeChannel %in some cases diode is recorded on an electrode channel rather than an analog channel
-                [Atmp]=dataRecordingObj.getData(analogChNum,round(dataRecordingObj.recordingDuration_ms/2),avgTrialDuration);
-                
+                [Atmp]=dataRecordingObj.getData([analogChNum refCh],round(dataRecordingObj.recordingDuration_ms/2),avgTrialDuration);
             else
-                [Atmp]=dataRecordingObj.getAnalogData(analogChNum,round(dataRecordingObj.recordingDuration_ms/2),avgTrialDuration);
+                [Atmp]=dataRecordingObj.getAnalogData([analogChNum refCh],round(dataRecordingObj.recordingDuration_ms/2),avgTrialDuration);
             end
         end
+        if ~isempty(refCh)
+            Atmp=Atmp(1,:,:)-Atmp(2,:,:);
+        end
         Atmp=permute(Atmp,[3 1 2]);Atmp=Atmp(:);
-        medAtmp = fastmedfilt1d(Atmp,round(frameSamples*0.8));
+        medAtmp = fastmedfilt1d(Atmp,medLength);
         eva = evalclusters(medAtmp,'kmeans','DaviesBouldin','KList',[2:4]);
         [idx,cent] = kmeans(medAtmp,eva.OptimalK,'Replicates',5);
         [cent,sortind]=sort(cent);
-        switch biasTowardsThreshold
+        transitions=(cent(1:end-1)+cent(2:end))/2;
+        switch thresholdSelection
             case 'none'
                 transitions=(cent(1:end-1)+cent(2:end))/2;
             case 'upper'
@@ -141,6 +173,19 @@ if ~noisyAnalog %if noisy, estimate for each chunk
             case 'lower'
                 s=std(Atmp(idx==sortind(1)));
                 transitions=cent(1)+s/2;
+            case 'manual'
+                f=figure;plot(medAtmp);hold on;line([1 numel(medAtmp)],[transitions(1) transitions(1)]);
+                title('Press on thresholds (left mouse button) - stop at right mouse button');
+                button=1;
+                while button~=3
+                    [ptx,pty,button]=ginput(1);
+                    if button~=3
+                        transitions(i)=pty;
+                    end
+                end
+                close(f);
+            case 'fixed'
+                transitions=inputThreshold;
         end
     end
     %show the threshold separation, this will close at the end of the detection.
@@ -153,17 +198,22 @@ upCross=cell(1,nChunks);
 downCross=cell(1,nChunks);
 for i=1:nChunks
     if extractDiodeElectrodeChannel %in some cases diode is recorded on an electrode channel rather than an analog channel
-        [A,t_ms]=dataRecordingObj.getData(analogChNum,chunkStart(i),chunkEnd(i)-chunkStart(i));
+        [A,t_ms]=dataRecordingObj.getData([analogChNum refCh],chunkStart(i),chunkEnd(i)-chunkStart(i));
     else
-        [A,t_ms]=dataRecordingObj.getAnalogData(analogChNum,chunkStart(i),chunkEnd(i)-chunkStart(i));
+        [A,t_ms]=dataRecordingObj.getAnalogData([analogChNum refCh],chunkStart(i),chunkEnd(i)-chunkStart(i));
+    end
+    if ~isempty(refCh)
+        A=A(1,:,:)-A(2,:,:);
     end
     if ~noisyAnalog
         A=squeeze(A);
-        medA = fastmedfilt1d(A,round(frameSamples*0.8));
+        medA = fastmedfilt1d(A,medLength);
     else
-        Ftmp=F.getFilteredData(A);
-        Aflat=A-Ftmp; %flatten oscilations and drift
-        medA = fastmedfilt1d(Aflat(:),round(frameSamples*2));
+        if lowpass
+            Ftmp=F.getFilteredData(A);
+            Aflat=A-Ftmp; %flatten oscilations and drift
+        end
+        medA = fastmedfilt1d(Aflat(:),medLength*2);
         eva = evalclusters(medA,'kmeans','DaviesBouldin','KList',[2:4]);
         [idx,cent] = kmeans(medA,eva.OptimalK,'Replicates',2);
         cent=sort(cent);
@@ -242,8 +292,8 @@ if plotDiodeTransitions
     end
     hold on;
     
-    hp1=plot(t_ms,A);
-    hp2=plot(t_ms,medA,'g');
+    hp1=plot(t_ms,squeeze(A));
+    hp2=plot(t_ms,squeeze(medA),'g');
     
     upCrossTmp=find(medA(1:end-1)<transitions(1) & medA(2:end)>=transitions(1));
     downCrossTmp=find(medA(1:end-1)>transitions(1) & medA(2:end)<=transitions(1));
