@@ -206,7 +206,7 @@ classdef VS_image < VStim
                 xlabel('Time [ms]');
                 legend('On','Off');
                 line([0 0],ylim,'color','k','LineStyle','--');
-                
+
                 subplot(2,2,4);
                 bar(1e3*intCenter,n4(1:end-1,:),'Edgecolor','none');
                 xlim(1e3*intervals([find(sum(n4,2)>0,1,'first')-3 find(sum(n4,2)>0,1,'last')+4]));
@@ -216,7 +216,7 @@ classdef VS_image < VStim
                 line([0 0],ylim,'color','k','LineStyle','--');
             end
         end
-        
+
         function cleanUp(obj)
             %clear previous textures
             if ~isempty(obj.imgTex)
@@ -224,32 +224,33 @@ classdef VS_image < VStim
                 obj.imgTex=[];
             end
         end
-        
+
         function obj=CMloadImages(obj,srcHandle,eventData,hPanel)
             obj.imagesDir = uigetdir('','Choose directory containing images (tif/jpg)');
-            
+
             dTif=dir([obj.imagesDir obj.fSep '*.tif']);
             dJpg=dir([obj.imagesDir obj.fSep '*.jpg']);
             d=[dTif;dJpg];
-            
+
             obj.imgNames={d.name};
             nImages=numel(obj.imgNames);
-            
+
             if nImages==0
                 error('No images were selected');
             end
-            
+
             obj.calculateImageTextures;
         end
-        
+
+
         function obj=calculateImageTextures(obj,event,metaProp)
             disp(['preparing textures with rotation ' num2str(obj.rotation) ' !!!!']);
             nImages=numel(obj.imgNames);
             nScreens=numel(obj.selectedScreen);
-            
+
             %clear previous textures
             obj.cleanUp
-            
+
             % Create textures for all images
             for i=1:nImages
                 I=imread([obj.imagesDir obj.fSep obj.imgNames{i}]);
