@@ -1,4 +1,4 @@
-classdef VS_linearlyMovingBar < VStim
+classdef VS_linearlyMovingBarWidth < VStim
     properties (SetAccess=public)
         barLuminosity = 255; %(L_high-L_low)/L_low
         barWidth = 10; %pixels
@@ -25,7 +25,6 @@ classdef VS_linearlyMovingBar < VStim
         speeds
         directions
         offsets
-        order
         barTrajectories1X
         barTrajectories2X
         barTrajectories1Y
@@ -68,10 +67,10 @@ classdef VS_linearlyMovingBar < VStim
             
             %randomize
             if obj.randomize
-                obj.order=randperm(obj.nTotTrials);
-                obj.speeds=obj.speeds(obj.order);
-                obj.offsets=obj.offsets(obj.order);
-                obj.directions=obj.directions(obj.order);
+                randomPermutation=randperm(obj.nTotTrials);
+                obj.speeds=obj.speeds(randomPermutation);
+                obj.offsets=obj.offsets(randomPermutation);
+                obj.directions=obj.directions(randomPermutation);
             end
             
             %run test Flip (sometimes this first flip is slow and so it is not included in the anlysis
@@ -116,11 +115,11 @@ classdef VS_linearlyMovingBar < VStim
                         y=y0+yV.*t;
                         
                         rotatedCoord=rotationMatrix(2*pi-tmpPhi+pi/2)*mainBarCoordinates;
-                        tmp=ones(obj.nFrames(i,j,k),1) * rotatedCoord(:,1)' + [x y];
+                        tmp=round(ones(obj.nFrames(i,j,k),1) * rotatedCoord(:,1)' + [x y]);
                         obj.barTrajectories1X(i,j,k,1:obj.nFrames(i,j,k))=tmp(:,1);
                         obj.barTrajectories1Y(i,j,k,1:obj.nFrames(i,j,k))=tmp(:,2);
                         
-                        tmp=ones(obj.nFrames(i,j,k),1) * rotatedCoord(:,2)' + [x y];
+                        tmp=round(ones(obj.nFrames(i,j,k),1) * rotatedCoord(:,2)' + [x y]);
                         obj.barTrajectories2X(i,j,k,1:obj.nFrames(i,j,k))=tmp(:,1);
                         obj.barTrajectories2Y(i,j,k,1:obj.nFrames(i,j,k))=tmp(:,2);
                         
@@ -151,40 +150,37 @@ classdef VS_linearlyMovingBar < VStim
                 obj.sendTTL(2,true);
                 for j=1:obj.nFrames(pTmpSpeed,pTmpOffset,pTmpPhi)
                     % Update display
-                    tmpLines=squeeze([obj.barTrajectories1X(pTmpSpeed,pTmpOffset,pTmpPhi,j:j+5),...
-                        obj.barTrajectories1Y(pTmpSpeed,pTmpOffset,pTmpPhi,j:j+5),...
-                        obj.barTrajectories2X(pTmpSpeed,pTmpOffset,pTmpPhi,j:j+5),...
-                        obj.barTrajectories2Y(pTmpSpeed,pTmpOffset,pTmpPhi,j:j+5)])';
+                    %                     Screen('DrawLine', obj.PTB_win, obj.barLuminosity,...
+                    %                         obj.barTrajectories1X(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
+                    %                         obj.barTrajectories1Y(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
+                    %                         obj.barTrajectories2X(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
+                    %                         obj.barTrajectories2Y(pTmpSpeed,pTmpOffset,pTmpPhi,j), obj.barWidth);
 
-                    Screen('DrawLines', obj.PTB_win, obj.barLuminosity,round([tmpLines(1,1),tmpLines(1,3),tmpLines(5,1),tmpLines(5,3); ...
-                        tmpLines(1,2),tmpLines(1,4),tmpLines(5,2),tmpLines(5,4)])',obj.barWidth);
-
-                                   %{
-                    Screen('DrawLine', obj.PTB_win, obj.barLuminosity,...
-                        obj.barTrajectories1X(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
-                        obj.barTrajectories1Y(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
-                        obj.barTrajectories2X(pTmpSpeed,pTmpOffset,pTmpPhi,j),...
-                        obj.barTrajectories2Y(pTmpSpeed,pTmpOffset,pTmpPhi,j), obj.barWidth);
-                    %}
+                    drawWideBar(obj.PTB_win, obj.barLuminosity, ...
+                        obj.barTrajectories1X(pTmpSpeed,pTmpOffset,pTmpPhi,j), ...
+                        obj.barTrajectories1Y(pTmpSpeed,pTmpOffset,pTmpPhi,j), ...
+                        obj.barTrajectories2X(pTmpSpeed,pTmpOffset,pTmpPhi,j), ...
+                        obj.barTrajectories2Y(pTmpSpeed,pTmpOffset,pTmpPhi,j), ...
+                        obj.barWidth);
 
                     obj.applyBackgound;  %set background mask and finalize drawing (drawing finished)
-                    
+
                     obj.sendTTL(3,true); %session start trigger (also triggers the recording start)
                     %[obj.flip(i,j),obj.stim(i,j),obj.flipEnd(i,j),obj.miss(i,j)]=Screen('Flip',obj.PTB_win,tTmp(j));
-                    Screen('Flip',obj.PTB_win,tTmp(j));
+                    [obj.flip(i,j),obj.stim(i,j),obj.flipEnd(i,j),obj.miss(i,j)]=Screen('Flip',obj.PTB_win,tTmp(j));
                     obj.sendTTL(3,false); %session start trigger (also triggers the recording start)
                 end
                 obj.sendTTL(2,false); %session start trigger (also triggers the recording start)
-                
+
                 Screen('FillRect',obj.PTB_win,obj.visualFieldBackgroundLuminance);
                 obj.applyBackgound;  %set background mask and finalize drawing (drawing finished)
 
                 [endSessionTime]=Screen('Flip',obj.PTB_win);
                 % Start wait: Code here is run during the waiting for the new session
-                
+
                 % End wait
                 disp(['Trial ' num2str(i) '/' num2str(obj.nTotTrials)]);
-                
+
                 %check if stimulation session was stopped by the user
                 [keyIsDown, ~, keyCode] = KbCheck;
                 if keyCode(obj.escapeKeyCode)
@@ -192,12 +188,44 @@ classdef VS_linearlyMovingBar < VStim
                     obj.sendTTL(1,false);
                     return;
                 end
-                
+
                 WaitSecs(obj.interTrialDelay-(GetSecs-endSessionTime));
             end
             WaitSecs(obj.postSessionDelay);
             obj.sendTTL(1,false); %session end trigger
             disp('Session ended');
+
+
+            function drawWideBar(window, color, x1, y1, x2, y2, width)
+                % Compute vector between points
+                dx = x2 - x1;
+                dy = y2 - y1;
+                len = hypot(dx, dy);
+
+                % Unit direction vector
+                ux = dx / len;
+                uy = dy / len;
+
+                % Perpendicular vector
+                px = -uy;
+                py = ux;
+
+                % Half-width offsets
+                hx = px * width / 2;
+                hy = py * width / 2;
+
+                % Rectangle corners (rotated and translated)
+                poly = [
+                    x1 + hx, y1 + hy;
+                    x1 - hx, y1 - hy;
+                    x2 - hx, y2 - hy;
+                    x2 + hx, y2 + hy
+                    ];
+
+                % Draw the bar as a filled polygon
+                Screen('FillPoly', window, color, poly, 1); % 1 = isClosed = yes
+            end
+
         end
 
         function outStats=getLastStimStatistics(obj,hFigure)
@@ -248,7 +276,7 @@ classdef VS_linearlyMovingBar < VStim
            %}
         end
         %class constractor
-        function obj=VS_linearlyMovingBar(w,h)
+        function obj=VS_linearlyMovingBarWidth(w,h)
             %get the visual stimulation methods
             obj = obj@VStim(w); %calling superclass constructor
             obj.stimDuration=NaN;
