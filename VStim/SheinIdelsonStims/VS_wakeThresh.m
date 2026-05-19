@@ -9,6 +9,7 @@ classdef VS_wakeThresh < VStim
     end
     properties (Constant)
         CMloadAudioTxt='load audio files [.wav]';
+         interTrialVariabilityTxt='Variability standard deviation in seconds - a value of 1 will sample delays from a distribution of ~1';
         remarks={'Categories in Flash stimuli are: Luminocity'};
     end
     properties (SetAccess=protected)
@@ -28,6 +29,7 @@ classdef VS_wakeThresh < VStim
             nSoundSources=numel(obj.audioFileName);
             obj.nTotTrials=obj.trialsPerCategory*nSoundSources;
             
+            if nSoundSources==0, error('No Sounds were loaded!'),end
             %calculate sequece of positions and times
             obj.soundSourceSeq=nan(1,obj.nTotTrials);
             c=1;
@@ -41,7 +43,7 @@ classdef VS_wakeThresh < VStim
                 obj.soundSourceSeq=obj.soundSourceSeq(randomPermutation);
             end
             obj.interTrialSeq=randn(1,obj.nTotTrials)*obj.interTrialVariability+obj.interTrialDelay;
-            if any(obj.interTrialSeq)<0
+            if any(obj.interTrialSeq<0)
                 warning('Negative inter trial delays!!!!! - zeroing negative terms');
                 obj.interTrialSeq(obj.interTrialSeq<0)=0;
             end
@@ -56,6 +58,7 @@ classdef VS_wakeThresh < VStim
             %initialte audio player
             for i=1:numel(obj.soundWF)
                 player(i) = audioplayer(obj.soundWF{i},obj.soundFs(i));
+                duration(i)=round(player(i).TotalSamples/player(i).SampleRate);
             end
             
             %main loop - start the session
@@ -66,7 +69,8 @@ classdef VS_wakeThresh < VStim
                 
                 %pp(uint8(obj.trigChNames(2)),[true true],false,uint8(0),uint64(32784)); %stim onset trigger
                 obj.sendTTL(2,true);
-                play(player(obj.soundSourceSeq(i)));
+                player(obj.soundSourceSeq(i)).playblocking;
+                WaitSecs(duration(obj.soundSourceSeq(i)));
                 obj.sendTTL(2,false);
                 
                 disp(['Trial ' num2str(i) '/' num2str(obj.nTotTrials)]);
@@ -88,12 +92,27 @@ classdef VS_wakeThresh < VStim
         
         function obj=CMloadAudio(obj,srcHandle,eventData,hPanel)
             [obj.audioFileName, obj.audioPathName] = uigetfile('*.*','Choose audio files','MultiSelect','On');
+            if ~iscell(obj.audioFileName)
+                tmp{1}=obj.audioFileName;
+                obj.audioFileName=tmp;
+            end
             for i=1:numel(obj.audioFileName)
                 [obj.soundWF{i},obj.soundFs(i)] = audioread([obj.audioPathName obj.audioFileName{i}]);
             end
             disp([num2str(numel(obj.audioFileName)) ' sounds loaded successfully!']);
         end
         
+        %{
+        %Make a chirp and save it:
+            t=(1:5e4)/1e4;%[100uS]-MHz
+            f0=10; %[Hz]
+            f1=10e3 %[Hz]
+            t1=5;
+            y = chirp(t,f0,t1,f1);
+            pspectrum(y,t,"spectrogram")
+            audiowrite('Chirp10_10000_5S.wav',y,1e4);
+        %}
+
         function outStats=getLastStimStatistics(obj,hFigure)
         end
         
