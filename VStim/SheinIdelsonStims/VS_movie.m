@@ -1,6 +1,6 @@
 classdef VS_movie < VStim
     properties (SetAccess=public)
-        playAsImgSequence = true;
+        playAsImgSequence = false;
         randomize = false;
         loops = 1;
         skipFrames = 0;
@@ -67,7 +67,7 @@ classdef VS_movie < VStim
                 disp('Simulation mode finished running');
                 return;
             end
-            maxFrameCount=obj.initialFrozenFrames+max(obj.movFrameCount);
+            maxFrameCount=obj.initialFrozenFrames+max(obj.movFrameCount)*obj.loops;
             
             obj.flip=nan(obj.nTotTrials,maxFrameCount);
             obj.stim=nan(obj.nTotTrials,maxFrameCount);
@@ -90,13 +90,33 @@ classdef VS_movie < VStim
                 
                 frameTTL=true;
                 if ~obj.playAsImgSequence
-                    [droppedframes] = Screen('PlayMovie', obj.movPtr, 1, obj.loops);
+                    frameCounter = 0;
+                    dstRect = obj.getMovieDestinationRect(currMovie,1);
+                    for k=1:obj.loops
+                        Screen('SetMovieTimeIndex', obj.movPtr(currMovie), 0);
+                        Screen('PlayMovie', obj.movPtr(currMovie), 1, 1, 0);
+                        while true
+                            [tex, ~] = Screen('GetMovieImage', obj.PTB_win, obj.movPtr(currMovie), 1);
+                            if tex <= 0
+                                break;
+                            end
+                            frameCounter = frameCounter+1;
+                            Screen('DrawTexture',obj.PTB_win,tex,[],dstRect,obj.rotation);
+                            obj.applyBackgound;
+                            [obj.flip(i,frameCounter),obj.stim(i,frameCounter),obj.flipEnd(i,frameCounter),obj.miss(i,frameCounter)]=Screen('Flip',obj.PTB_win);
+                            Screen('Close',tex);
+                            obj.sendTTL(3,frameTTL);
+                            frameTTL=~frameTTL;
+                        end
+                        Screen('PlayMovie', obj.movPtr(currMovie), 0);
+                    end
                 else
                     for k=1:obj.loops
                         tFrameTmp=tFrame+GetSecs+obj.ifi/2;
-                        for j=frameIdx
+                        currFrameIdx=[ones(1,obj.initialFrozenFrames) 1:obj.movFrameCount(currMovie)];
+                        for j=currFrameIdx
                             % Update display
-                            Screen('DrawTexture',obj.PTB_win,obj.movTex(j,currMovie),[],obj.visualFieldRect,obj.rotation);
+                            Screen('DrawTexture',obj.PTB_win,obj.movTex(j,currMovie),[],obj.getMovieDestinationRect(currMovie,1),obj.rotation);
                             obj.applyBackgound;
                             
                             [obj.flip(i,j),obj.stim(i,j),obj.flipEnd(i,j),obj.miss(i,j)]=Screen('Flip',obj.PTB_win,tFrameTmp(j));
@@ -148,6 +168,14 @@ classdef VS_movie < VStim
                 Screen('Close',obj.movTex);
                 obj.movTex=[];
             end
+            if ~isempty(obj.movPtr)
+                for iMovie=1:numel(obj.movPtr)
+                    if obj.movPtr(iMovie)>0
+                        Screen('CloseMovie',obj.movPtr(iMovie));
+                    end
+                end
+                obj.movPtr=[];
+            end
         end
 
         function obj=CMloadMovie(obj,srcHandle,eventData,hPanel)
@@ -157,12 +185,19 @@ classdef VS_movie < VStim
 
             for n=1:obj.nVideos
                 [obj.movieFileName, obj.movPathName] = uigetfile('*.*','Choose movie files or series of images named *_F001-*_FXXX','MultiSelect','On');
+                if isequal(obj.movieFileName,0)
+                    disp('No video was chosen! Did not calculate textures');
+                    return;
+                end
                 if iscell(obj.movieFileName)
                     %order images
                     [~,shortNames]=cellfun(@(x) fileparts(x),obj.movieFileName,'UniformOutput',0);
                     [pImg]=cell2mat(cellfun(@(x) str2num(x(end-2:end)),shortNames,'UniformOutput',0));
                     [~,order]=sort(pImg);
                     obj.movieFileName=obj.movieFileName(order);
+                    obj.playAsImgSequence=true;
+                elseif obj.isMovieFile(obj.movieFileName)
+                    obj.playAsImgSequence=false;
                 end
                 
                 obj.calculateVideoTextures(n);
@@ -180,26 +215,36 @@ classdef VS_movie < VStim
             if nFiles>0
                 
                 if nFiles>1 %single frame mode
-                    obj.movFrameCount=nFiles;
+                    obj.movFrameCount(n)=nFiles;
                     obj.playAsImgSequence=true;
                     
-                    for i=1:obj.movFrameCount
+                    for i=1:obj.movFrameCount(n)
                         I=imread([obj.movPathName obj.movieFileName{i}]);
                         [M,N,l]=size(I);
                         
                         if obj.showOnFullScreen==1
                             obj.movTex(i,n)=Screen('MakeTexture', obj.PTB_win,I,obj.rotation);
+                            obj.movWidth(n)=N;
+                            obj.movHeight(n)=M;
                         elseif N>=M
                             cutPixels=round((N-M)/2);
                             obj.movTex(i,n)=Screen('MakeTexture', obj.PTB_win,I(:,(cutPixels+1):(end-cutPixels),:),obj.rotation);
+                            obj.movWidth(n)=M;
+                            obj.movHeight(n)=M;
                         else
                             cutPixels=round((M-N)/2);
                             obj.movTex(i,n)=Screen('MakeTexture', obj.PTB_win,I((cutPixels+1):(end-cutPixels),:,:),obj.rotation);
+                            obj.movWidth(n)=N;
+                            obj.movHeight(n)=N;
                         end
                         
                         fprintf('%d ',i);
                     end
                 else %complete movie mode
+                    if obj.playAsImgSequence && obj.isMovieFile(obj.movieFileName)
+                        disp('Movie files are streamed from disk; not uploading the whole movie to memory.');
+                        obj.playAsImgSequence=false;
+                    end
                     if obj.playAsImgSequence
                         disp('Uploading video to memory...');
                         readerObj=VideoReader([obj.movPathName obj.movieFileName]);
@@ -237,6 +282,32 @@ classdef VS_movie < VStim
             end
             
         end
+
+        function dstRect=getMovieDestinationRect(obj,nMovie,screenIdx)
+            if nargin<3
+                screenIdx=1;
+            end
+            if obj.showOnFullScreen==1
+                targetRect=obj.rect(screenIdx,:);
+            else
+                targetRect=obj.visualFieldRect(screenIdx,:);
+            end
+            if isempty(obj.movWidth) || isempty(obj.movHeight) || numel(obj.movWidth)<nMovie || obj.movWidth(nMovie)<=0 || obj.movHeight(nMovie)<=0
+                dstRect=targetRect;
+                return;
+            end
+            targetWidth=targetRect(3)-targetRect(1);
+            targetHeight=targetRect(4)-targetRect(2);
+            scale=min(targetWidth/obj.movWidth(nMovie),targetHeight/obj.movHeight(nMovie));
+            drawWidth=round(obj.movWidth(nMovie)*scale);
+            drawHeight=round(obj.movHeight(nMovie)*scale);
+            dstRect=CenterRect([0 0 drawWidth drawHeight],targetRect);
+        end
+
+        function tf=isMovieFile(obj,fileName)
+            [~,~,ext]=fileparts(fileName);
+            tf=ismember(lower(ext),{'.avi','.mp4','.mov','.mpg','.mpeg','.m4v','.wmv','.mj2'});
+        end
         
         function obj=CMsaveVideoAsSingleImages(obj,srcHandle,eventData,hPanel)
             [fileName, pathName] = uiputfile('*.*','Choose file base name');
@@ -248,7 +319,7 @@ classdef VS_movie < VStim
             for j=frameIdx
                 fprintf('%d ',j);
                 % Update display
-                Screen('DrawTexture',obj.PTB_win,obj.movTex(j,1),[],obj.visualFieldRect,obj.rotation);
+                Screen('DrawTexture',obj.PTB_win,obj.movTex(j,1),[],obj.getMovieDestinationRect(1,1),obj.rotation);
                 obj.applyBackgound;
                 
                 Screen('Flip',obj.PTB_win);
